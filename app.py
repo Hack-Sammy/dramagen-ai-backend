@@ -21,7 +21,33 @@ import base64
 import time
 
 app = Flask(__name__)
-CORS(app)
+
+# Fix CORS - Allow requests from anywhere
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"]
+    }
+})
+
+# Handle OPTIONS preflight requests
+@app.before_request
+def handle_preflight():
+    if request.method == "OPTIONS":
+        response = app.make_default_options_response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+        return response
+
+# Add CORS headers to every response
+@app.after_request
+def after_request(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization"
+    return response
 
 # API Keys from environment variables
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
@@ -62,7 +88,6 @@ STYLES = {
 
 # ================================================
 # STORY SPLITTER
-# Uses Groq Llama 3 to smartly split story
 # ================================================
 
 def split_with_groq(story, num_scenes):
@@ -117,7 +142,6 @@ def fallback_split(story, num_scenes):
 
 # ================================================
 # IMAGE GENERATOR
-# Calls Hugging Face free Inference API
 # ================================================
 
 def generate_image(prompt, style_key):
@@ -168,15 +192,12 @@ def generate_image(prompt, style_key):
             print(f"Request error: {e}")
             time.sleep(10)
 
-    # Return placeholder if all attempts fail
     print("All attempts failed. Using placeholder.")
     img = Image.new("RGB", (896, 512), color=(20, 20, 40))
     return img
 
 # ================================================
 # VIDEO BUILDER
-# Combines all images into one MP4
-# No audio. Clean still scenes.
 # ================================================
 
 def build_video(images, seconds_per_scene, job_id):
@@ -217,8 +238,11 @@ def home():
 def health():
     return jsonify({"status": "ok"})
 
-@app.route("/generate", methods=["POST"])
+@app.route("/generate", methods=["POST", "OPTIONS"])
 def generate():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"})
+
     try:
         data = request.get_json()
 
@@ -232,30 +256,22 @@ def generate():
         num_scenes    = int(data.get("num_scenes", 6))
         sec_per_scene = int(data.get("sec_per_scene", 10))
 
-        # Validate
         if not story or len(story) < 20:
             return jsonify({"error": "Story is too short"}), 400
 
-        if num_scenes < 1:
-            num_scenes = 6
-        if num_scenes > 8:
-            num_scenes = 8
-        if sec_per_scene < 5:
-            sec_per_scene = 5
-        if sec_per_scene > 15:
-            sec_per_scene = 15
+        if num_scenes < 1: num_scenes = 6
+        if num_scenes > 8: num_scenes = 8
+        if sec_per_scene < 5: sec_per_scene = 5
+        if sec_per_scene > 15: sec_per_scene = 15
 
-        # Unique job ID
         job_id = str(uuid.uuid4())[:8]
         print(f"\n[{job_id}] New generation request")
         print(f"[{job_id}] Scenes: {num_scenes} | Style: {style_key}")
 
-        # Step 1: Split story
         print(f"[{job_id}] Splitting story...")
         scenes = split_with_groq(story, num_scenes)
         print(f"[{job_id}] Got {len(scenes)} scenes")
 
-        # Step 2: Generate images
         images = []
         char_anchor = (
             "main character " + char_name +
@@ -269,11 +285,9 @@ def generate():
             image = generate_image(prompt, style_key)
             images.append(image)
 
-        # Step 3: Build video
         print(f"[{job_id}] Building video...")
         video_path = build_video(images, sec_per_scene, job_id)
 
-        # Step 4: Convert images to base64 for gallery preview
         scene_images_b64 = []
         for img in images:
             buffer = io.BytesIO()
@@ -283,7 +297,6 @@ def generate():
             scene_images_b64.append("data:image/jpeg;base64," + b64)
 
         total_duration = len(scenes) * sec_per_scene
-
         print(f"[{job_id}] Complete. Duration: {total_duration}s")
 
         return jsonify({
@@ -302,7 +315,6 @@ def generate():
 
 @app.route("/download/<job_id>", methods=["GET"])
 def download(job_id):
-    # Sanitize job_id
     job_id = re.sub(r'[^a-zA-Z0-9\-]', '', job_id)
     video_path = os.path.join(TEMP_DIR, job_id + ".mp4")
 
