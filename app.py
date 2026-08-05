@@ -1,9 +1,9 @@
 # ================================================
 # DRAMAGEN AI - BACKEND
-# Simple and reliable version
+# Fixed CORS version
 # ================================================
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, make_response
 from flask_cors import CORS
 import os
 import re
@@ -20,45 +20,41 @@ import time
 
 app = Flask(__name__)
 
-# Allow ALL origins - fixes CORS completely
-CORS(app)
+# ================================================
+# CORS - Handle everything manually
+# ================================================
 
-@app.after_request
-def add_cors_headers(response):
+def add_cors(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, Authorization, X-Requested-With, Accept, Origin"
+    response.headers["Access-Control-Max-Age"] = "86400"
     return response
 
-@app.route("/health", methods=["GET", "OPTIONS"])
-def health():
-    return jsonify({"status": "ok", "message": "DramaGen AI is running"})
+@app.after_request
+def after_request(response):
+    return add_cors(response)
 
-@app.route("/", methods=["GET"])
-def home():
-    return jsonify({"status": "ok", "message": "DramaGen AI Backend"})
+@app.before_request
+def handle_options():
+    if request.method == "OPTIONS":
+        response = make_response()
+        response.status_code = 200
+        return add_cors(response)
 
-@app.route("/test", methods=["GET"])
-def test():
-    groq_key = os.environ.get("GROQ_API_KEY", "")
-    hf_key = os.environ.get("HF_API_KEY", "")
-    return jsonify({
-        "status": "ok",
-        "groq_key_set": bool(groq_key),
-        "hf_key_set": bool(hf_key),
-        "groq_key_length": len(groq_key),
-        "hf_key_length": len(hf_key)
-    })
+# ================================================
+# API KEYS
+# ================================================
 
-# API Keys
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 HF_API_KEY = os.environ.get("HF_API_KEY", "")
 HF_API_URL = "https://api-inference.huggingface.co/models/Lykon/dreamshaper-8"
-
 TEMP_DIR = tempfile.mkdtemp()
-print("TEMP_DIR:", TEMP_DIR)
-print("GROQ key set:", bool(GROQ_API_KEY))
-print("HF key set:", bool(HF_API_KEY))
+
+print("=== DRAMAGEN AI BACKEND STARTED ===")
+print("GROQ key set: " + str(bool(GROQ_API_KEY)))
+print("HF key set: " + str(bool(HF_API_KEY)))
+print("TEMP DIR: " + TEMP_DIR)
 
 # ================================================
 # STYLES
@@ -84,11 +80,35 @@ STYLES = {
 }
 
 # ================================================
+# ROUTES
+# ================================================
+
+@app.route("/", methods=["GET", "OPTIONS"])
+def home():
+    return jsonify({
+        "status": "ok",
+        "message": "DramaGen AI Backend is running"
+    })
+
+@app.route("/health", methods=["GET", "OPTIONS"])
+def health():
+    return jsonify({"status": "ok"})
+
+@app.route("/test", methods=["GET", "OPTIONS"])
+def test():
+    return jsonify({
+        "status": "ok",
+        "groq_key_set": bool(GROQ_API_KEY),
+        "hf_key_set": bool(HF_API_KEY),
+        "groq_key_length": len(GROQ_API_KEY),
+        "hf_key_length": len(HF_API_KEY)
+    })
+
+# ================================================
 # STORY SPLITTER
 # ================================================
 
 def split_story(story, num_scenes):
-    # Try Groq first
     if GROQ_API_KEY:
         try:
             from groq import Groq
@@ -96,7 +116,7 @@ def split_story(story, num_scenes):
             prompt = (
                 "You are a storyboard artist. "
                 "Split this drama story into exactly " + str(num_scenes) + " visual scenes. "
-                "Each scene is a detailed image description with setting, emotion, action, lighting. "
+                "Each scene is a detailed image description including setting, emotion, action and lighting. "
                 "Story: " + story + " "
                 "Return ONLY a JSON array of " + str(num_scenes) + " strings. Nothing else."
             )
@@ -111,12 +131,11 @@ def split_story(story, num_scenes):
             if match:
                 scenes = json.loads(match.group(0))
                 if isinstance(scenes, list) and len(scenes) > 0:
-                    print("Groq split successful: " + str(len(scenes)) + " scenes")
+                    print("Groq success: " + str(len(scenes)) + " scenes")
                     return scenes[:num_scenes]
         except Exception as e:
             print("Groq error: " + str(e))
 
-    # Fallback: simple sentence split
     print("Using fallback splitter")
     sentences = re.split(r'(?<=[.!?])\s+', story.strip())
     sentences = [s.strip() for s in sentences if len(s.strip()) > 5]
@@ -139,7 +158,7 @@ def split_story(story, num_scenes):
 def generate_image(prompt, style_key):
     style = STYLES.get(style_key, STYLES["pixar"])
     full_prompt = style["prefix"] + ", " + prompt
-    print("Generating: " + prompt[:60])
+    print("Generating image: " + prompt[:60])
 
     headers = {"Authorization": "Bearer " + HF_API_KEY}
     payload = {
@@ -155,40 +174,36 @@ def generate_image(prompt, style_key):
 
     for attempt in range(5):
         try:
-            print("Attempt " + str(attempt + 1) + "...")
+            print("Attempt " + str(attempt + 1))
             resp = requests.post(
                 HF_API_URL,
                 headers=headers,
                 json=payload,
                 timeout=60
             )
-            print("Status: " + str(resp.status_code))
+            print("HTTP Status: " + str(resp.status_code))
 
             if resp.status_code == 200:
                 img = Image.open(io.BytesIO(resp.content))
-                print("Image OK: " + str(img.size))
+                print("Image OK")
                 return img
-
             elif resp.status_code == 503:
-                print("Model loading, waiting 30s...")
-                time.sleep(30)
-
+                wait = 30 + (attempt * 10)
+                print("Model loading. Waiting " + str(wait) + "s")
+                time.sleep(wait)
             elif resp.status_code == 429:
-                print("Rate limited, waiting 20s...")
-                time.sleep(20)
-
+                print("Rate limited. Waiting 30s")
+                time.sleep(30)
             else:
-                print("Error: " + resp.text[:100])
+                print("HF Error: " + str(resp.status_code))
+                print(resp.text[:200])
                 break
-
         except Exception as e:
-            print("Request failed: " + str(e))
+            print("Request error: " + str(e))
             time.sleep(10)
 
-    # Return dark placeholder
-    print("Using placeholder image")
-    img = Image.new("RGB", (768, 432), color=(20, 20, 40))
-    return img
+    print("All attempts failed. Using placeholder.")
+    return Image.new("RGB", (768, 432), color=(20, 20, 40))
 
 # ================================================
 # VIDEO BUILDER
@@ -198,7 +213,7 @@ def build_video(images, seconds_per_scene, job_id):
     path = os.path.join(TEMP_DIR, job_id + ".mp4")
     fps = 24
     spf = fps * seconds_per_scene
-    print("Building video: " + str(len(images)) + " scenes x " + str(seconds_per_scene) + "s")
+    print("Building video: " + str(len(images)) + " scenes")
 
     writer = imageio.get_writer(
         path,
@@ -219,7 +234,7 @@ def build_video(images, seconds_per_scene, job_id):
     return path
 
 # ================================================
-# GENERATE ENDPOINT
+# GENERATE
 # ================================================
 
 @app.route("/generate", methods=["POST", "OPTIONS"])
@@ -227,12 +242,13 @@ def generate():
     if request.method == "OPTIONS":
         return jsonify({"status": "ok"})
 
-    print("\n=== NEW REQUEST ===")
+    print("\n=== GENERATE REQUEST ===")
 
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True, silent=True)
         if not data:
-            return jsonify({"error": "No data"}), 400
+            print("No JSON data received")
+            return jsonify({"error": "No data received"}), 400
 
         story = str(data.get("story", "")).strip()
         char_name = str(data.get("char_name", "Maya")).strip()
@@ -241,39 +257,29 @@ def generate():
         num_scenes = min(8, max(1, int(data.get("num_scenes", 6))))
         sec_per_scene = min(15, max(5, int(data.get("sec_per_scene", 10))))
 
-        print("Story length: " + str(len(story)))
+        print("Story: " + str(len(story)) + " chars")
         print("Scenes: " + str(num_scenes))
         print("Style: " + style_key)
 
         if len(story) < 20:
-            return jsonify({"error": "Story too short"}), 400
+            return jsonify({"error": "Story is too short"}), 400
 
         job_id = str(uuid.uuid4())[:8]
-        print("Job ID: " + job_id)
+        print("Job: " + job_id)
 
-        # Split story
-        print("Splitting story...")
         scenes = split_story(story, num_scenes)
-        print("Scenes: " + str(len(scenes)))
+        print("Got " + str(len(scenes)) + " scenes")
 
-        # Generate images
         images = []
-        char_desc = (
-            "main character " + char_name +
-            " who is " + char_look
-        )
+        char_desc = "main character " + char_name + " who is " + char_look
 
         for i, scene in enumerate(scenes):
             print("Image " + str(i + 1) + "/" + str(len(scenes)))
-            prompt = scene + ", " + char_desc
-            img = generate_image(prompt, style_key)
+            img = generate_image(scene + ", " + char_desc, style_key)
             images.append(img)
 
-        # Build video
-        print("Building video...")
         video_path = build_video(images, sec_per_scene, job_id)
 
-        # Convert to base64 for preview
         previews = []
         for img in images:
             buf = io.BytesIO()
@@ -282,7 +288,7 @@ def generate():
             previews.append("data:image/jpeg;base64," + b64)
 
         total = len(scenes) * sec_per_scene
-        print("Done! Duration: " + str(total) + "s")
+        print("Complete. Duration: " + str(total) + "s")
 
         return jsonify({
             "success": True,
@@ -301,10 +307,10 @@ def generate():
         return jsonify({"error": str(e)}), 500
 
 # ================================================
-# DOWNLOAD ENDPOINT
+# DOWNLOAD
 # ================================================
 
-@app.route("/download/<job_id>", methods=["GET"])
+@app.route("/download/<job_id>", methods=["GET", "OPTIONS"])
 def download(job_id):
     job_id = re.sub(r'[^a-zA-Z0-9\-]', '', job_id)
     path = os.path.join(TEMP_DIR, job_id + ".mp4")
