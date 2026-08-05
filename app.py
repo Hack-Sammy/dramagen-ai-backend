@@ -797,27 +797,58 @@ def generate():
         job_id = str(uuid.uuid4())[:8]
         print("Job: " + job_id)
 
-        scenes = split_story(story, num_scenes)
-        print("Scenes: " + str(len(scenes)))
+        # Step 1: Split story
+        print("Splitting story...")
+        try:
+            scenes = split_story(story, num_scenes)
+            print("Got " + str(len(scenes)) + " scenes")
+        except Exception as e:
+            print("Split error: " + str(e))
+            return jsonify({"error": "Story splitting failed: " + str(e)}), 500
 
+        # Step 2: Generate images
         images = []
         char_desc = "main character " + char_name + " who is " + char_look
         for i, scene in enumerate(scenes):
             print("Image " + str(i + 1) + "/" + str(len(scenes)))
-            img = generate_image(scene + ", " + char_desc, style_key)
-            images.append(img)
+            try:
+                img = generate_image(scene + ", " + char_desc, style_key)
+                images.append(img)
+                print("Image " + str(i + 1) + " OK")
+            except Exception as e:
+                print("Image error: " + str(e))
+                # Use placeholder instead of failing
+                images.append(Image.new("RGB", (768, 432), color=(20, 20, 40)))
 
-        video_path = build_video(images, sec_per_scene, job_id)
+        print("All images done: " + str(len(images)))
 
+        # Step 3: Build video
+        print("Building video...")
+        try:
+            video_path = build_video(images, sec_per_scene, job_id)
+            print("Video built: " + video_path)
+        except Exception as e:
+            print("Video build error: " + str(e))
+            import traceback
+            traceback.print_exc()
+            return jsonify({"error": "Video building failed: " + str(e)}), 500
+
+        # Step 4: Create previews
+        print("Creating previews...")
         previews = []
-        for img in images:
-            buf = io.BytesIO()
-            img.resize((384, 216)).save(buf, format="JPEG", quality=75)
-            b64 = base64.b64encode(buf.getvalue()).decode()
-            previews.append("data:image/jpeg;base64," + b64)
+        try:
+            for img in images:
+                buf = io.BytesIO()
+                img.resize((384, 216)).save(buf, format="JPEG", quality=75)
+                b64 = base64.b64encode(buf.getvalue()).decode()
+                previews.append("data:image/jpeg;base64," + b64)
+            print("Previews done: " + str(len(previews)))
+        except Exception as e:
+            print("Preview error: " + str(e))
+            previews = []
 
         total = len(scenes) * sec_per_scene
-        print("Done! " + str(total) + "s")
+        print("Complete! Duration: " + str(total) + "s")
 
         return jsonify({
             "success": True,
@@ -830,7 +861,7 @@ def generate():
         })
 
     except Exception as e:
-        print("ERROR: " + str(e))
+        print("FATAL ERROR: " + str(e))
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
