@@ -16,16 +16,16 @@ CORS(app)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 HF_API_KEY   = os.environ.get("HF_API_KEY", "")
-HF_API_URL   = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
+HF_API_URL = "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5"
 
 print("GROQ: " + str(bool(GROQ_API_KEY)))
 print("HF:   " + str(bool(HF_API_KEY)))
 
 STYLES = {
-    "pixar": "pixar style, disney 3d animation, vibrant colors, expressive character, smooth 3d render, cinematic lighting, highly detailed",
-    "anime": "anime style, studio ghibli, beautiful illustration, emotional, detailed, vibrant colors",
-    "comic": "comic book style, bold outlines, dramatic colors, professional illustration",
-    "watercolor": "watercolor illustration, soft painting, beautiful, emotional, storybook art"
+    "pixar": "pixar 3d animation style, vibrant colors, expressive, cinematic lighting",
+    "anime": "anime style, studio ghibli, beautiful, emotional, detailed",
+    "comic": "comic book style, bold outlines, dramatic colors, dynamic",
+    "watercolor": "watercolor painting, soft colors, artistic, emotional"
 }
 
 NEGATIVE = "realistic, photograph, blurry, ugly, distorted, watermark, text, low quality"
@@ -356,45 +356,86 @@ def split_story(story, num_scenes):
 
 def make_image(prompt, style_key):
     prefix = STYLES.get(style_key, STYLES["pixar"])
-    full = prefix + ", " + prompt
-    headers = {"Authorization": "Bearer " + HF_API_KEY}
+
+    # Keep prompt short and clean
+    clean_prompt = prompt[:200]
+    full = prefix + ", " + clean_prompt
+
+    print("Full prompt: " + full[:100])
+
+    headers = {
+        "Authorization": "Bearer " + HF_API_KEY,
+        "Content-Type": "application/json"
+    }
+
     payload = {
         "inputs": full,
         "parameters": {
             "negative_prompt": NEGATIVE,
-            "num_inference_steps": 8,
+            "num_inference_steps": 15,
             "guidance_scale": 7.5,
             "width": 512,
-            "height": 288
+            "height": 512
+        },
+        "options": {
+            "wait_for_model": True,
+            "use_cache": False
         }
     }
+
     for attempt in range(3):
         try:
-            print("Attempt " + str(attempt+1) + ": " + prompt[:50])
+            print("Attempt " + str(attempt + 1))
             r = requests.post(
                 HF_API_URL,
                 headers=headers,
                 json=payload,
-                timeout=25
+                timeout=55
             )
-            print("HTTP " + str(r.status_code))
+            print("HTTP status: " + str(r.status_code))
+            print("Response size: " + str(len(r.content)) + " bytes")
+
             if r.status_code == 200:
-                img = Image.open(io.BytesIO(r.content))
-                print("OK: " + str(img.size))
-                return img
+                # Check if response is actually an image
+                if len(r.content) < 1000:
+                    print("Response too small. Probably not an image.")
+                    print("Content: " + str(r.content[:200]))
+                    time.sleep(10)
+                    continue
+
+                try:
+                    img = Image.open(io.BytesIO(r.content))
+                    img = img.convert("RGB")
+                    print("Image OK: " + str(img.size))
+                    return img
+                except Exception as e:
+                    print("Image open error: " + str(e))
+                    print("Raw content: " + str(r.content[:200]))
+                    time.sleep(10)
+                    continue
+
             elif r.status_code == 503:
-                print("Model loading. Wait 15s")
-                time.sleep(15)
+                print("Model loading. Waiting 20s...")
+                time.sleep(20)
+
             elif r.status_code == 429:
-                print("Rate limit. Wait 15s")
-                time.sleep(15)
+                print("Rate limited. Waiting 20s...")
+                time.sleep(20)
+
             else:
-                print("Error: " + r.text[:100])
-                return Image.new("RGB", (512, 288), (20, 20, 40))
+                print("HF Error " + str(r.status_code))
+                print("Response: " + r.text[:300])
+                time.sleep(10)
+
+        except requests.exceptions.Timeout:
+            print("Request timed out on attempt " + str(attempt + 1))
         except Exception as e:
-            print("Err: " + str(e))
-            return Image.new("RGB", (512, 288), (20, 20, 40))
-    return Image.new("RGB", (512, 288), (20, 20, 40))
+            print("Unexpected error: " + str(e))
+            time.sleep(5)
+
+    print("All attempts failed. Returning placeholder.")
+    img = Image.new("RGB", (512, 512), color=(30, 20, 50))
+    return img
 
 @app.route("/generate", methods=["POST"])
 def generate():
@@ -425,7 +466,9 @@ def generate():
 
         for i, scene in enumerate(scenes):
             print("Image " + str(i+1) + "/" + str(len(scenes)))
-            prompt = scene + ", main character " + char_desc
+            scene_short = scene[:100]
+            char_short = char_look[:50]
+            prompt = scene_short + ", " + char_name + ", " + char_short
             img = make_image(prompt, style_key)
 
             buf = io.BytesIO()
