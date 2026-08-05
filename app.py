@@ -16,7 +16,7 @@ CORS(app)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 HF_API_KEY   = os.environ.get("HF_API_KEY", "")
-HF_API_URL   = "https://api-inference.huggingface.co/models/Lykon/dreamshaper-8"
+HF_API_URL   = "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1"
 
 print("GROQ: " + str(bool(GROQ_API_KEY)))
 print("HF:   " + str(bool(HF_API_KEY)))
@@ -408,7 +408,7 @@ def generate():
         char_name = str(data.get("char_name", "Maya")).strip()
         char_look = str(data.get("char_look", "cartoon character")).strip()
         style_key = str(data.get("style", "pixar"))
-        num_scenes = min(8, max(1, int(data.get("num_scenes", 6))))
+        num_scenes = min(3, max(1, int(data.get("num_scenes", 3))))
         sec_per_scene = min(15, max(5, int(data.get("sec_per_scene", 10))))
 
         if len(story) < 20:
