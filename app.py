@@ -362,35 +362,39 @@ def make_image(prompt, style_key):
         "inputs": full,
         "parameters": {
             "negative_prompt": NEGATIVE,
-            "num_inference_steps": 20,
+            "num_inference_steps": 8,
             "guidance_scale": 7.5,
-            "width": 768,
-            "height": 432
+            "width": 512,
+            "height": 288
         }
     }
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             print("Attempt " + str(attempt+1) + ": " + prompt[:50])
-            r = requests.post(HF_API_URL, headers=headers, json=payload, timeout=60)
+            r = requests.post(
+                HF_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=25
+            )
             print("HTTP " + str(r.status_code))
             if r.status_code == 200:
                 img = Image.open(io.BytesIO(r.content))
                 print("OK: " + str(img.size))
                 return img
             elif r.status_code == 503:
-                wait = 30 + attempt * 10
-                print("Wait " + str(wait) + "s")
-                time.sleep(wait)
+                print("Model loading. Wait 15s")
+                time.sleep(15)
             elif r.status_code == 429:
-                print("Rate limit. Wait 30s")
-                time.sleep(30)
+                print("Rate limit. Wait 15s")
+                time.sleep(15)
             else:
                 print("Error: " + r.text[:100])
-                break
+                return Image.new("RGB", (512, 288), (20, 20, 40))
         except Exception as e:
             print("Err: " + str(e))
-            time.sleep(10)
-    return Image.new("RGB", (768, 432), (20, 20, 40))
+            return Image.new("RGB", (512, 288), (20, 20, 40))
+    return Image.new("RGB", (512, 288), (20, 20, 40))
 
 @app.route("/generate", methods=["POST"])
 def generate():
