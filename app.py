@@ -762,15 +762,52 @@ def build_video(images, seconds_per_scene, job_id):
     path = os.path.join(TEMP_DIR, job_id + ".mp4")
     fps = 24
     spf = fps * seconds_per_scene
-    writer = imageio.get_writer(path, fps=fps, codec="libx264", quality=7, pixelformat="yuv420p")
-    for i, img in enumerate(images):
-        frame = np.array(img.resize((768, 432)))
-        for _ in range(spf):
-            writer.append_data(frame)
-        print("Scene " + str(i + 1) + " written")
-    writer.close()
-    print("Video saved")
-    return path
+
+    print("Video path: " + path)
+    print("FPS: " + str(fps))
+    print("Frames per scene: " + str(spf))
+    print("Total scenes: " + str(len(images)))
+
+    try:
+        writer = imageio.get_writer(
+            path,
+            fps=fps,
+            codec="libx264",
+            quality=7,
+            pixelformat="yuv420p",
+            macro_block_size=None
+        )
+
+        for i, img in enumerate(images):
+            print("Writing scene " + str(i + 1))
+            # Make sure image is RGB
+            if img.mode != "RGB":
+                img = img.convert("RGB")
+            # Resize to exact dimensions
+            img_resized = img.resize((768, 432))
+            frame = np.array(img_resized)
+            print("Frame shape: " + str(frame.shape))
+            for _ in range(spf):
+                writer.append_data(frame)
+            print("Scene " + str(i + 1) + " written")
+
+        writer.close()
+        print("Writer closed")
+
+        # Verify file exists
+        if os.path.exists(path):
+            size = os.path.getsize(path)
+            print("Video file size: " + str(size) + " bytes")
+        else:
+            raise Exception("Video file was not created")
+
+        return path
+
+    except Exception as e:
+        print("build_video error: " + str(e))
+        import traceback
+        traceback.print_exc()
+        raise e
 
 # ================================================
 # GENERATE ENDPOINT
