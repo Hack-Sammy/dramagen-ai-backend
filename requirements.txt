@@ -3,7 +3,4 @@ flask-cors
 groq
 requests
 Pillow
-numpy
-imageio
-imageio-ffmpeg
 gunicorn
